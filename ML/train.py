@@ -1,108 +1,124 @@
+import os
+import pickle
 import pandas as pd
 import numpy as np
-import pickle
 
-from sklearn.preprocessing import LabelEncoder
 from sklearn.model_selection import train_test_split
+from sklearn.preprocessing import LabelEncoder
 from sklearn.naive_bayes import MultinomialNB
-from sklearn.ensemble import RandomForestClassifier
 from sklearn.linear_model import LogisticRegression
-from sklearn.metrics import accuracy_score
+from sklearn.ensemble import RandomForestClassifier
 
 # =============================
-# CONFIG
+# PATHS
 # =============================
-DATASET_FILE = "data/dataset_augmented.csv"   # 🔴 use augmented dataset
-MODELS_DIR = "models/"
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+DATA_DIR = os.path.join(BASE_DIR, "data")
+MODELS_DIR = os.path.join(BASE_DIR, "models")
+
+os.makedirs(MODELS_DIR, exist_ok=True)
+
+DATASET_PATH = os.path.join(DATA_DIR, "dataset.csv")
 
 # =============================
-# 1. Load dataset
+# LOAD DATASET
 # =============================
-df = pd.read_csv(DATASET_FILE)
-df = df.fillna("")
+df = pd.read_csv(DATASET_PATH)
 
-print(f"Loaded dataset with {len(df)} rows")
+# Assume last column is Disease
+symptom_columns = df.columns[:-1]
+disease_column = df.columns[-1]
 
 # =============================
-# 2. Collect all symptoms
+# BUILD SYMPTOM VOCABULARY
 # =============================
-symptom_cols = [col for col in df.columns if col != "Disease"]
-
 all_symptoms = set()
-for col in symptom_cols:
-    all_symptoms.update(df[col].unique())
 
-all_symptoms.discard("")
+for col in symptom_columns:
+    all_symptoms.update(df[col].dropna().unique())
+
 all_symptoms = sorted(all_symptoms)
 
 print(f"Total unique symptoms: {len(all_symptoms)}")
 
+# Save symptom list
+with open(os.path.join(MODELS_DIR, "symptom_list.pkl"), "wb") as f:
+    pickle.dump(all_symptoms, f)
+
 # =============================
-# 3. Create binary feature matrix
+# VECTORIZE DATASET
 # =============================
-X = np.zeros((df.shape[0], len(all_symptoms)))
+X = np.zeros((len(df), len(all_symptoms)), dtype=np.int8)
 
 for i, row in df.iterrows():
-    for symptom in row[symptom_cols]:
-        if symptom != "":
-            X[i, all_symptoms.index(symptom)] = 1
+    for symptom in row[symptom_columns]:
+        if pd.notna(symptom):
+            idx = all_symptoms.index(symptom)
+            X[i, idx] = 1
 
 # =============================
-# 4. Encode disease labels
+# ENCODE LABELS
 # =============================
-le = LabelEncoder()
-y = le.fit_transform(df["Disease"])
+label_encoder = LabelEncoder()
+y = label_encoder.fit_transform(df[disease_column])
+
+with open(os.path.join(MODELS_DIR, "label_encoder.pkl"), "wb") as f:
+    pickle.dump(label_encoder, f)
 
 # =============================
-# 5. Train / test split
+# TRAIN / TEST SPLIT
 # =============================
 X_train, X_test, y_train, y_test = train_test_split(
-    X, y,
+    X,
+    y,
     test_size=0.2,
     random_state=42,
     stratify=y
 )
 
 # =============================
-# 6. Train models
+# MODEL 1: NAIVE BAYES
 # =============================
-models = {
-    "naive_bayes": MultinomialNB(),
-    "random_forest": RandomForestClassifier(
-        n_estimators=300,
-        max_depth=None,
-        random_state=42,
-        n_jobs=-1
-    ),
-    "logistic_regression": LogisticRegression(
-        max_iter=3000,
-        n_jobs=-1
-    )
-}
+nb_model = MultinomialNB()
+nb_model.fit(X_train, y_train)
 
-trained_models = {}
-
-print("\nTraining models...\n")
-
-for name, model in models.items():
-    model.fit(X_train, y_train)
-    preds = model.predict(X_test)
-    acc = accuracy_score(y_test, preds)
-
-    print(f"{name} accuracy: {acc:.4f}")
-    trained_models[name] = model
+with open(os.path.join(MODELS_DIR, "naive_bayes.pkl"), "wb") as f:
+    pickle.dump(nb_model, f)
 
 # =============================
-# 7. Save models & artifacts
+# MODEL 2: LOGISTIC REGRESSION
 # =============================
-with open(f"{MODELS_DIR}/symptom_list.pkl", "wb") as f:
-    pickle.dump(all_symptoms, f)
+lr_model = LogisticRegression(
+    max_iter=1000,
+    solver="lbfgs",
+    n_jobs=1
+)
+lr_model.fit(X_train, y_train)
 
-with open(f"{MODELS_DIR}/label_encoder.pkl", "wb") as f:
-    pickle.dump(le, f)
+with open(os.path.join(MODELS_DIR, "logistic_regression.pkl"), "wb") as f:
+    pickle.dump(lr_model, f)
 
-for name, model in trained_models.items():
-    with open(f"{MODELS_DIR}/{name}.pkl", "wb") as f:
-        pickle.dump(model, f)
+# =============================
+# MODEL 3: OPTIMIZED RANDOM FOREST
+# =============================
+rf_model = RandomForestClassifier(
+    n_estimators=80,        # small & efficient
+    max_depth=15,
+    min_samples_split=10,
+    min_samples_leaf=5,
+    max_features="sqrt",
+    n_jobs=1,
+    random_state=42
+)
+rf_model.fit(X_train, y_train)
 
-print("\n✅ Models trained and saved successfully using augmented dataset")
+with open(os.path.join(MODELS_DIR, "random_forest.pkl"), "wb") as f:
+    pickle.dump(rf_model, f)
+
+# =============================
+# SUMMARY
+# =============================
+print("✅ Training completed successfully")
+print(f"✔ Diseases: {len(label_encoder.classes_)}")
+print(f"✔ Symptoms: {len(all_symptoms)}")
+print("✔ Models saved to ML/models/")

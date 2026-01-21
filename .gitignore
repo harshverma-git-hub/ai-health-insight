@@ -10,8 +10,6 @@ npm-debug.log
 __pycache__/
 *.pyc
 
-# ML models (CRITICAL)
-ML/models/*.pkl
 
 # Build
 dist/
