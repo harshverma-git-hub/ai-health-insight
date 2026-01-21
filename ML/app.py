@@ -1,43 +1,37 @@
 import os
 import pickle
-import subprocess
-from fastapi import FastAPI
-from pydantic import BaseModel
 import numpy as np
+from fastapi import FastAPI, HTTPException
+from pydantic import BaseModel
 
 # =============================
 # CONFIG
 # =============================
 MODELS_DIR = "models"
+
 NAIVE_BAYES_PATH = os.path.join(MODELS_DIR, "naive_bayes.pkl")
 RF_PATH = os.path.join(MODELS_DIR, "random_forest.pkl")
 LR_PATH = os.path.join(MODELS_DIR, "logistic_regression.pkl")
 LE_PATH = os.path.join(MODELS_DIR, "label_encoder.pkl")
 SYMPTOMS_PATH = os.path.join(MODELS_DIR, "symptom_list.pkl")
 
-# =============================
-# AUTO-TRAIN IF MODELS MISSING
-# =============================
-def models_exist():
-    return all([
-        os.path.exists(NAIVE_BAYES_PATH),
-        os.path.exists(RF_PATH),
-        os.path.exists(LR_PATH),
-        os.path.exists(LE_PATH),
-        os.path.exists(SYMPTOMS_PATH),
-    ])
+REQUIRED_FILES = [
+    NAIVE_BAYES_PATH,
+    RF_PATH,
+    LR_PATH,
+    LE_PATH,
+    SYMPTOMS_PATH
+]
 
-if not models_exist():
-    print("⚠️ ML models not found. Training models now...")
-    os.makedirs(MODELS_DIR, exist_ok=True)
-
-    # Run training script
-    subprocess.run(
-        ["python", "train.py"],
-        check=True
+# =============================
+# VERIFY MODELS EXIST
+# =============================
+missing = [f for f in REQUIRED_FILES if not os.path.exists(f)]
+if missing:
+    raise RuntimeError(
+        f"Missing model files: {missing}. "
+        "This service is inference-only. Train models offline and upload them to the server."
     )
-
-    print("✅ Model training completed.")
 
 # =============================
 # LOAD MODELS
@@ -61,8 +55,8 @@ with open(SYMPTOMS_PATH, "rb") as f:
 # FASTAPI APP
 # =============================
 app = FastAPI(
-    title="AI Health Insight - ML Service",
-    description="ML inference service for AI Health Insight",
+    title="AI Health Insight – ML Inference Service",
+    description="Inference-only ML service for disease prediction",
     version="1.0.0"
 )
 
@@ -88,6 +82,9 @@ def vectorize(symptoms):
 # =============================
 @app.post("/predict")
 def predict(data: SymptomInput):
+    if not data.symptoms:
+        raise HTTPException(status_code=400, detail="No symptoms provided")
+
     x = vectorize(data.symptoms)
 
     nb_probs = nb_model.predict_proba(x)[0]
@@ -106,15 +103,14 @@ def predict(data: SymptomInput):
     results = [
         {
             "name": label_encoder.inverse_transform([i])[0],
-            "confidence": float(combined_probs[i])
+            "confidence": round(float(combined_probs[i]), 4)
         }
         for i in top_indices
     ]
 
     return {
         "possible_conditions": results,
-        "risk_level": "Medium",  # already handled by UI logic
-        "severity_score": int(len(data.symptoms)),
+        "risk_level": "Medium",
         "description": "AI-estimated health conditions based on provided symptoms.",
         "precautions": [],
         "disclaimer": "This is not a medical diagnosis. Consult a qualified medical professional."
@@ -125,4 +121,4 @@ def predict(data: SymptomInput):
 # =============================
 @app.get("/")
 def root():
-    return {"status": "ML Service is running"}
+    return {"status": "ML inference service running"}
